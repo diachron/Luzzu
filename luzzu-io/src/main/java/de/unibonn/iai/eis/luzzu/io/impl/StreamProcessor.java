@@ -27,6 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.hp.hpl.jena.graph.Triple;
+import com.hp.hpl.jena.query.Dataset;
 import com.hp.hpl.jena.rdf.model.Model;
 import com.hp.hpl.jena.rdf.model.ModelFactory;
 import com.hp.hpl.jena.rdf.model.NodeIterator;
@@ -76,6 +77,7 @@ public class StreamProcessor implements IOProcessor {
 	private boolean genQualityReport;
 	private Model metricConfiguration;
 	private Model qualityReport;
+	private Dataset qualityMetadata;
 	
 	protected PipedRDFIterator<?> iterator;
 	protected PipedRDFStream<?> rdfStream;
@@ -370,7 +372,8 @@ public class StreamProcessor implements IOProcessor {
 		}
 		
 		try {
-			RDFDataMgr.write(System.out, md.createQualityMetadata(), Lang.TRIG);
+			//RDFDataMgr.write(System.out, md.createQualityMetadata(), Lang.TRIG);
+			this.qualityMetadata = md.createQualityMetadata();
 		} catch (MetadataException e) {
 			logger.error(e.getMessage());
 		}
@@ -419,6 +422,10 @@ public class StreamProcessor implements IOProcessor {
 
 	public Model retreiveQualityReport(){
 		return this.qualityReport;
+	}
+	
+	public Dataset retreiveQualityMetadata(){
+		return this.qualityMetadata;
 	}
 
 	private final class MetricProcess {
