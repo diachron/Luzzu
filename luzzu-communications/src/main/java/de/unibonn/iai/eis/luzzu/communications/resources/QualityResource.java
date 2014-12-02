@@ -118,9 +118,13 @@ public class QualityResource {
 			datasetQualityMetadata = strmProc.retreiveQualityMetadata();
 
 			
+<<<<<<< HEAD
 			jsonResponse = buildJsonResponse((datasetURI == null) ? baseURI : datasetURI, modelQualityRep);
 			jsonResponse = buildJsonResponse(datasetURI, modelQualityRep, datasetQualityMetadata);
 
+=======
+			jsonResponse = buildJsonResponse(datasetURI, modelQualityRep, datasetQualityMetadata);
+>>>>>>> modified quality resource for diachron
 			logger.debug("Quality computation request completed. Output: {}", jsonResponse);
 						
 		} catch(Exception ex) {
@@ -143,7 +147,10 @@ public class QualityResource {
 	private String buildJsonResponse(String datasetURI, Model qualityReport, Dataset metadata) {
 		StringBuilder sbJsonResponse = new StringBuilder();
 		sbJsonResponse.append("{ \"Dataset\": \"" + datasetURI + "\", ");
+<<<<<<< HEAD
 		sbJsonResponse.append("\"Outcome\": \"SUCCESS\"");
+=======
+>>>>>>> modified quality resource for diachron
 		StringWriter mdWriter = new StringWriter();
 		RDFDataMgr.write(mdWriter, metadata, RDFFormat.JSONLD);
 		sbJsonResponse.append("\"QualityMetadata\":" +  mdWriter + ", ");
