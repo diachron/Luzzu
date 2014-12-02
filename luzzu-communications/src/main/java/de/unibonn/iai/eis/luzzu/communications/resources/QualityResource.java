@@ -18,6 +18,7 @@ import org.apache.jena.riot.RDFFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.hp.hpl.jena.query.Dataset;
 import com.hp.hpl.jena.rdf.model.Model;
 import com.hp.hpl.jena.rdf.model.ModelFactory;
 
@@ -100,13 +101,16 @@ public class QualityResource {
 			strmProc.cleanUp();
 			
 			Model modelQualityRep = null;
+			Dataset datasetQualityMetadata = null;
 			
 			// Retrieve quality report, if requested to do so
 			if(genQualityReport) {
 				modelQualityRep = strmProc.retreiveQualityReport();
 			}
+			datasetQualityMetadata = strmProc.retreiveQualityMetadata();
+
 			
-			jsonResponse = buildJsonResponse((datasetURI == null) ? baseURI : datasetURI, modelQualityRep);
+			jsonResponse = buildJsonResponse(datasetURI, modelQualityRep, datasetQualityMetadata);
 			logger.debug("Quality computation request completed. Output: {}", jsonResponse);
 						
 		} catch(Exception ex) {
@@ -126,10 +130,13 @@ public class QualityResource {
 	 * @param qualityReport JENA model containing the quality report, computed. Null otherwise
 	 * @return JSON representation of the response containing details about the quality computation
 	 */
-	private String buildJsonResponse(String datasetURI, Model qualityReport) {
+	private String buildJsonResponse(String datasetURI, Model qualityReport, Dataset metadata) {
 		StringBuilder sbJsonResponse = new StringBuilder();
 		sbJsonResponse.append("{ \"Dataset\": \"" + datasetURI + "\", ");
-		sbJsonResponse.append("\"Outcome\": \"SUCCESS\"");
+		StringWriter mdWriter = new StringWriter();
+		RDFDataMgr.write(mdWriter, metadata, RDFFormat.JSONLD);
+		sbJsonResponse.append("\"QualityMetadata\":" +  mdWriter + ", ");
+		sbJsonResponse.append("\"Outcome\": SUCCESS");
 
 		// If the quality report was generated, add its JSON representation to the response
 		if(qualityReport != null && !qualityReport.isEmpty()) {
