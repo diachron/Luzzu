@@ -22,10 +22,6 @@ import com.hp.hpl.jena.query.Dataset;
 import com.hp.hpl.jena.rdf.model.Model;
 import com.hp.hpl.jena.rdf.model.ModelFactory;
 
-
-import com.hp.hpl.jena.rdf.model.Statement;
-import com.hp.hpl.jena.rdf.model.StmtIterator;
-
 import de.unibonn.iai.eis.luzzu.io.impl.StreamProcessor;
 
 /**
@@ -91,18 +87,14 @@ public class QualityResource {
 			// Parse the metrics configuration as JSON-LD and convert it to RDF to extract its triples, note that no base URI is expected
 			Model modelConfig = ModelFactory.createDefaultModel();
 			RDFDataMgr.read(modelConfig, new StringReader(jsonStrMetricsConfig), null, Lang.JSONLD);
-			
-			// Obtain the base URI of the resources, which is important as it will be used to name the quality metadata models
-			if (lstBaseUri != null) {
-				baseURI = lstBaseUri.get(0);
-			}
 
 			StreamProcessor strmProc;
 			String[] expandedListDatasetURI = lstDatasetURI.get(0).split(",");
 			if (expandedListDatasetURI.length == 1){
 				datasetURI = expandedListDatasetURI[0];
-				strmProc = new StreamProcessor(baseURI, datasetURI, genQualityReport, modelConfig);
+				strmProc = new StreamProcessor(datasetURI, genQualityReport, modelConfig);
 			} else {
+				if (lstBaseUri != null) baseURI = lstBaseUri.get(0);
 				strmProc = new StreamProcessor(baseURI, Arrays.asList(expandedListDatasetURI), genQualityReport, modelConfig);
 			}
 			strmProc.processorWorkFlow();
@@ -118,13 +110,7 @@ public class QualityResource {
 			datasetQualityMetadata = strmProc.retreiveQualityMetadata();
 
 			
-<<<<<<< HEAD
-			jsonResponse = buildJsonResponse((datasetURI == null) ? baseURI : datasetURI, modelQualityRep);
 			jsonResponse = buildJsonResponse(datasetURI, modelQualityRep, datasetQualityMetadata);
-
-=======
-			jsonResponse = buildJsonResponse(datasetURI, modelQualityRep, datasetQualityMetadata);
->>>>>>> modified quality resource for diachron
 			logger.debug("Quality computation request completed. Output: {}", jsonResponse);
 						
 		} catch(Exception ex) {
@@ -147,10 +133,6 @@ public class QualityResource {
 	private String buildJsonResponse(String datasetURI, Model qualityReport, Dataset metadata) {
 		StringBuilder sbJsonResponse = new StringBuilder();
 		sbJsonResponse.append("{ \"Dataset\": \"" + datasetURI + "\", ");
-<<<<<<< HEAD
-		sbJsonResponse.append("\"Outcome\": \"SUCCESS\"");
-=======
->>>>>>> modified quality resource for diachron
 		StringWriter mdWriter = new StringWriter();
 		RDFDataMgr.write(mdWriter, metadata, RDFFormat.JSONLD);
 		sbJsonResponse.append("\"QualityMetadata\":" +  mdWriter + ", ");
