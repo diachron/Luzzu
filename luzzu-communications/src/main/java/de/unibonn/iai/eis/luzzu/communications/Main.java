@@ -22,7 +22,7 @@ public class Main {
 	private static final String PORT_NUMBER = PROP.getProperty("PORT");
 	private static final String APPLICATION = PROP.getProperty("APPLICATION");
 	
-	 public static final String BASE_URI = SCHEME+"://"+DOMAIN+":"+PORT_NUMBER+"/"+ APPLICATION + "/";
+	public static final String BASE_URI = SCHEME+"://"+DOMAIN+":"+PORT_NUMBER+"/"+ APPLICATION + "/";
 
 
     /**
@@ -32,7 +32,7 @@ public class Main {
     public static HttpServer startServer() {
         // create a resource config that scans for JAX-RS resources and providers
         // in com.example package
-        final ResourceConfig rc = new ResourceConfig().packages("de.unibonn.iai.eis.luzzu").property(JsonGenerator.PRETTY_PRINTING, true);	;
+        final ResourceConfig rc = new ResourceConfig().packages("de.unibonn.iai.eis.luzzu").property(JsonGenerator.PRETTY_PRINTING, true);
         // create and start a new instance of grizzly http server
         // exposing the Jersey application at BASE_URI
        return GrizzlyHttpServerFactory.createHttpServer(URI.create(BASE_URI), rc);

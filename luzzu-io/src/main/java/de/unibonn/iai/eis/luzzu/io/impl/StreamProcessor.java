@@ -1,12 +1,11 @@
 package de.unibonn.iai.eis.luzzu.io.impl;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -17,7 +16,9 @@ import java.util.concurrent.Executors;
 
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFDataMgr;
+import org.apache.jena.riot.RDFFormat;
 import org.apache.jena.riot.RDFLanguages;
+import org.apache.jena.riot.RiotException;
 import org.apache.jena.riot.lang.PipedQuadsStream;
 import org.apache.jena.riot.lang.PipedRDFIterator;
 import org.apache.jena.riot.lang.PipedRDFStream;
@@ -28,6 +29,7 @@ import org.slf4j.LoggerFactory;
 
 import com.hp.hpl.jena.graph.Triple;
 import com.hp.hpl.jena.query.Dataset;
+import com.hp.hpl.jena.query.DatasetFactory;
 import com.hp.hpl.jena.rdf.model.Model;
 import com.hp.hpl.jena.rdf.model.ModelFactory;
 import com.hp.hpl.jena.rdf.model.NodeIterator;
@@ -81,6 +83,11 @@ public class StreamProcessor implements IOProcessor {
 	
 	protected PipedRDFIterator<?> iterator;
 	protected PipedRDFStream<?> rdfStream;
+	// RDFIterator parameters
+	private final int rdfIterBufferSize = PipedRDFIterator.DEFAULT_BUFFER_SIZE * 2;
+	private final int rdfIterPollTimeout = 10000;
+	private final int rdfIterMaxPolls = 50;
+	private final boolean rdfIterFairBufferLock = true;
 		
 	private ExecutorService executor;
 	private List<MetricProcess> lstMetricConsumers = new ArrayList<MetricProcess>();
@@ -112,7 +119,7 @@ public class StreamProcessor implements IOProcessor {
 		this.metricConfiguration = configuration;
 		this.baseURI = baseURI;
 		
-		PropertyManager.getInstance().addToEnvironmentVars("datasetURI", baseURI);
+		PropertyManager.getInstance().addToEnvironmentVars("baseURI", baseURI);
 	}
 	
 	public StreamProcessor(String baseURI, List<String> datasetList, boolean genQualityReport, Model configuration){
@@ -121,15 +128,17 @@ public class StreamProcessor implements IOProcessor {
 		this.metricConfiguration = configuration;
 		this.baseURI = baseURI;
 		
-		PropertyManager.getInstance().addToEnvironmentVars("datasetURI", baseURI);
+		PropertyManager.getInstance().addToEnvironmentVars("baseURI", baseURI);
 	}
 	
 	public void processorWorkFlow(){
 		this.setUpProcess();
 		
 		int datasetListCounter = 0;
+
 		for (String dataset : datasetList){
-			this.datasetURI = dataset;
+			this.datasetURI = dataset; 
+			PropertyManager.getInstance().addToEnvironmentVars("datasetURI", this.datasetURI);
 			try {
 				this.startProcessing();
 			} catch (ProcessorNotInitialised e) {
@@ -139,8 +148,12 @@ public class StreamProcessor implements IOProcessor {
 			if (datasetListCounter < datasetList.size()) this.reinitialiseProcessors();
 		}
 		
-		generateQualityMetadata();
-		if (this.genQualityReport) this.generateQualityReport();
+		this.writeQualityMetadataFile();
+		// Generate quality report, if required by the invoker and write it into a file
+		if (this.genQualityReport) {
+			this.generateQualityReport();
+			this.writeReportMetadataFile();
+		}
 	}
 
 	@SuppressWarnings("unchecked")
@@ -152,10 +165,10 @@ public class StreamProcessor implements IOProcessor {
 		Lang lang  = RDFLanguages.filenameToLang(datasetURI);
 		
 		if ((lang == Lang.NQ) || (lang == Lang.NQUADS)){
-			this.iterator = new PipedRDFIterator<Quad>();
+			this.iterator = new PipedRDFIterator<Quad>(rdfIterBufferSize, rdfIterFairBufferLock, rdfIterPollTimeout, rdfIterMaxPolls);
 			this.rdfStream = new PipedQuadsStream((PipedRDFIterator<Quad>) iterator);
 		} else {
-			this.iterator = new PipedRDFIterator<Triple>();
+			this.iterator = new PipedRDFIterator<Triple>(rdfIterBufferSize, rdfIterFairBufferLock, rdfIterPollTimeout, rdfIterMaxPolls);
 			this.rdfStream = new PipedTriplesStream((PipedRDFIterator<Triple>) iterator);
 		}
 		
@@ -174,12 +187,14 @@ public class StreamProcessor implements IOProcessor {
 			Lang lang  = RDFLanguages.filenameToLang(datasetURI);
 	
 			if ((lang == Lang.NQ) || (lang == Lang.NQUADS)){
-				this.iterator = new PipedRDFIterator<Quad>();
+				this.iterator = new PipedRDFIterator<Quad>(rdfIterBufferSize, rdfIterFairBufferLock, rdfIterPollTimeout, rdfIterMaxPolls);
 				this.rdfStream = new PipedQuadsStream((PipedRDFIterator<Quad>) iterator);
 			} else {
-				this.iterator = new PipedRDFIterator<Triple>();
+				this.iterator = new PipedRDFIterator<Triple>(rdfIterBufferSize, rdfIterFairBufferLock, rdfIterPollTimeout, rdfIterMaxPolls);
 				this.rdfStream = new PipedTriplesStream((PipedRDFIterator<Triple>) iterator);
 			}
+			logger.debug("PipedRDFIterator initialized with: Buffer Size {}, Fair Lock {}, Poll Timeout {}, Max Polls {}", 
+					rdfIterBufferSize, rdfIterFairBufferLock, rdfIterPollTimeout, rdfIterMaxPolls);
 			
 			this.isInitalised = true;
 			
@@ -206,23 +221,20 @@ public class StreamProcessor implements IOProcessor {
 
 	public void startProcessing() throws ProcessorNotInitialised{
 				
-		if(this.isInitalised == false) throw new ProcessorNotInitialised("Streaming will not start as processor has not been initalised");		
+		if(this.isInitalised == false) throw new ProcessorNotInitialised("Streaming will not start as processor has not been initalised");	
 		StreamMetadataSniffer sniffer = new StreamMetadataSniffer();
 		
 		Runnable parser = new Runnable(){
 			public void run() {
+				try{
 				RDFDataMgr.parse(rdfStream, datasetURI);
+				} catch (Exception e){
+					logger.error("Error parsing dataset {}. Error message {}", datasetURI, e.getMessage());
+				}
 			}
 		};
 		
 		executor.submit(parser);
-		
-		//try get dataset uri
-		if (this.iterator.getBaseIri() != null){
-			PropertyManager.getInstance().addToEnvironmentVars("datasetURI", this.iterator.getBaseIri());
-		} else if (this.iterator.getPrefixes().expand(":") != null){
-			PropertyManager.getInstance().addToEnvironmentVars("datasetURI", this.iterator.getPrefixes().expand(":"));
-		}
 		
 		try {
 			while (this.iterator.hasNext()) {
@@ -236,7 +248,10 @@ public class StreamProcessor implements IOProcessor {
 					}
 				}
 			}
-		} 
+		} catch(RiotException rex) {
+			logger.warn("Failed to process dataset: {}. RIOT exception: {}", datasetURI, rex.getMessage());
+			throw rex;
+		}
 		finally {
 			if (lstMetricConsumers != null){
 				for(MetricProcess mConsumer : lstMetricConsumers) {
@@ -264,7 +279,7 @@ public class StreamProcessor implements IOProcessor {
 					logger.error(e.getMessage());
 				}
 			}
-			metricInstances.get(clazz).metricValue();
+//			metricInstances.get(clazz).metricValue();
 		}
 	}
 	
@@ -349,6 +364,10 @@ public class StreamProcessor implements IOProcessor {
 		    throw new IllegalArgumentException("Don't know how to convert to " + target);
 	}
 
+	/**
+	 * Generates the quality report associated to this quality assessment process. 
+	 * Sets the result into the qualityReport attribute
+	 */
 	private void generateQualityReport() {
 		QualityReport r = new QualityReport();
 		List<Model> qualityProblems = new ArrayList<Model>();
@@ -358,12 +377,16 @@ public class StreamProcessor implements IOProcessor {
 			qualityProblems.add(r.createQualityProblem(m.getMetricURI(), m.getQualityProblems()));
 		}
 		
-		Resource res = ModelFactory.createDefaultModel().createResource(EnvironmentProperties.getInstance().getDatasetURI());
+		Resource res = ModelFactory.createDefaultModel().createResource(EnvironmentProperties.getInstance().getBaseURI());
 		this.qualityReport = r.createQualityReport(res, qualityProblems);
 	}
 	
+	/**
+	 * Prints the quality meta-data produced by this quality assessment process onto the standard output 
+	 */
+	@SuppressWarnings("unused")
 	private void generateQualityMetadata(){
-		Resource res = ModelFactory.createDefaultModel().createResource(EnvironmentProperties.getInstance().getDatasetURI());
+		Resource res = ModelFactory.createDefaultModel().createResource(EnvironmentProperties.getInstance().getBaseURI());
 		QualityMetadata md = new QualityMetadata(res, false);
 		
 		for(String className : this.metricInstances.keySet()){
@@ -384,25 +407,21 @@ public class StreamProcessor implements IOProcessor {
 	 * resulting metadata into a file, along the corresponding configuration parameters.
 	 * TODO: Consider other concurrency cases such as: several instances of the JVM and different class loaders
 	 */
-	@SuppressWarnings("unused")
 	private synchronized void writeQualityMetadataFile() {
 		// Build the full path of the file where quality metadata will be written
 		String metadataFilePath = this.metadataBaseDir + "/" + this.baseURI.replace("http://", "") + "/quality-meta-data.trig";
 		metadataFilePath = metadataFilePath.replace("//", "/");
+		logger.debug("Writing quality meta-data to file: metadataFilePath...");
 				
 		File fileMetadata = new File(metadataFilePath);
-		Model model = ModelFactory.createDefaultModel();
+		Dataset model = DatasetFactory.createMem();
 		// Verify whether there's already a quality metadata file for the assessed resource and load it if so
 		if(fileMetadata.exists()) {
-			try {
-				model.read(new FileInputStream(fileMetadata), this.baseURI);
-			} catch (FileNotFoundException e) {
-				logger.warn("Quality metadata file found but could not be loaded: {}. A new resource will be created...", metadataFilePath);
-			}
+			RDFDataMgr.read(model, metadataFilePath, this.baseURI, Lang.TRIG);
 		}
 		// Note that createResource() intelligently reuses the resource if found within a read model
-		Resource res = model.createResource(this.baseURI);
-		QualityMetadata md = new QualityMetadata(res, false);
+		Resource res = ModelFactory.createDefaultModel().createResource(this.baseURI);
+		QualityMetadata md = new QualityMetadata(model, res);
 		// Write quality metadata about the metrics assessed through this processor
 		for(String className : this.metricInstances.keySet()){
 			QualityMetric m = this.metricInstances.get(className);
@@ -414,9 +433,45 @@ public class StreamProcessor implements IOProcessor {
 			fileMetadata.createNewFile();
 			// Write new quality metadata into file
 			OutputStream out = new FileOutputStream(fileMetadata, false);
-			RDFDataMgr.write(out, md.createQualityMetadata(), Lang.TRIG);
+			RDFDataMgr.write(out, md.createQualityMetadata(), RDFFormat.TRIG);
+			
+			logger.debug("Quality meta-data successfully written.");
 		} catch(MetadataException | IOException ex) {
 			logger.error("Quality meta-data could not be written to file: " + metadataFilePath, ex);
+		}
+	}
+	
+	/**
+	 * Writes the quality report generated as part of the this assessment process. Stores the 
+	 * report metadata into a new file, identified by the along the corresponding configuration parameters.
+	 * TODO: Consider other concurrency cases such as: several instances of the JVM and different class loaders
+	 */
+	private synchronized void writeReportMetadataFile() {
+		// Build the full path of the file where quality report metadata will be written.
+		// Use current timestamp to identify the report corresponding to each individual quality assessment process
+		long timestamp = (new Date()).getTime();
+		String metadataFilePath = String.format("%s/%s/problem-report-%d.trig", this.metadataBaseDir, this.baseURI.replace("http://", ""), timestamp);
+		metadataFilePath = metadataFilePath.replace("//", "/");
+		logger.debug("Writing quality report to file: metadataFilePath...");
+
+		// Make sure that the quality report model has been properly generated before hand
+		if(this.retreiveQualityReport() != null) {
+			File fileMetadata = new File(metadataFilePath);
+			Dataset model = DatasetFactory.create(this.retreiveQualityReport());
+	
+			try {
+				// Make sure the file is created (the following call has no effect if the file exists)
+				fileMetadata.createNewFile();
+				// Write new quality metadata into file
+				OutputStream out = new FileOutputStream(fileMetadata, false);
+				RDFDataMgr.write(out, model, RDFFormat.TRIG);
+				
+				logger.debug("Quality report successfully written.");
+			} catch(IOException ex) {
+				logger.error("Quality meta-data could not be written to file: " + metadataFilePath, ex);
+			}
+		} else {
+			logger.warn("Attempted to write quality report, but no report model has been generated");
 		}
 	}
 
@@ -429,11 +484,11 @@ public class StreamProcessor implements IOProcessor {
 	}
 
 	private final class MetricProcess {
-		volatile Queue<Object2Quad> quadsToProcess = new BlockingArrayQueue<Object2Quad>(10000000);
+		volatile Queue<Object2Quad> quadsToProcess = new BlockingArrayQueue<Object2Quad>(1000000);
 		Thread metricThread = null;
 		String metricName = null;
         
-        Integer stmtsProcessed = 0;
+        Long stmtsProcessed = 0l;
         boolean stopSignal = false;
         
         MetricProcess(final QualityMetric m) { 
@@ -475,7 +530,7 @@ public class StreamProcessor implements IOProcessor {
 		
 		public void stop() {
 			while(!quadsToProcess.isEmpty()) {
-				logger.debug("Waiting for items on queue: {} Metric: {}", quadsToProcess.size(), this.metricName);
+				logger.trace("Waiting for items on queue: {} Metric: {}", quadsToProcess.size(), this.metricName);
 			}
 			
 			this.stopSignal = true;
